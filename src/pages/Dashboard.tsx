@@ -11,6 +11,7 @@ import {
   FileText 
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { supabase } from "@/integrations/supabase/client";
 import Navbar from "@/components/Navbar";
 import ResumePreview from "@/components/ResumePreview";
 import ScoreDisplay from "@/components/ScoreDisplay";
@@ -18,31 +19,106 @@ import ScoreDisplay from "@/components/ScoreDisplay";
 export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [analysisComplete, setAnalysisComplete] = useState(false);
-  const navigate = useNavigate();
-
-  useEffect(() => {
-    // Simulate loading
-    const timer = setTimeout(() => {
-      setLoading(false);
-      
-      // Simulate analysis completion
-      setTimeout(() => {
-        setAnalysisComplete(true);
-      }, 2000);
-    }, 2000);
-    
-    return () => clearTimeout(timer);
-  }, []);
-
-  const resumeScores = {
+  const [resume, setResume] = useState<any>(null);
+  const [resumeScores, setResumeScores] = useState({
     overall: 0.73,
     content: 0.78,
     formatting: 0.65,
     impact: 0.71,
     ats: 0.80,
+  });
+  const [quickInsights, setQuickInsights] = useState([]);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    // Fetch the most recent resume and its analysis
+    fetchResumeData();
+  }, []);
+
+  const fetchResumeData = async () => {
+    try {
+      setLoading(true);
+      
+      // Get the most recent resume
+      const { data: resumeData, error: resumeError } = await supabase
+        .from('user_resumes')
+        .select('*')
+        .order('upload_date', { ascending: false })
+        .limit(1)
+        .single();
+      
+      if (resumeError) {
+        console.error("Error fetching resume:", resumeError);
+        // If no resume found, we'll use default data
+        setLoading(false);
+        return;
+      }
+      
+      setResume(resumeData);
+      
+      // Get the scores for this resume
+      const { data: scoreData, error: scoreError } = await supabase
+        .from('resume_scores')
+        .select('*')
+        .eq('resume_id', resumeData.id)
+        .single();
+      
+      if (!scoreError && scoreData) {
+        setResumeScores({
+          overall: scoreData.overall_score,
+          content: scoreData.content_score,
+          formatting: scoreData.formatting_score,
+          impact: scoreData.impact_score,
+          ats: scoreData.ats_score,
+        });
+      }
+      
+      // Get a few feedback items for quick insights
+      const { data: feedbackData, error: feedbackError } = await supabase
+        .from('resume_feedback')
+        .select('*')
+        .eq('resume_id', resumeData.id)
+        .limit(3);
+      
+      if (!feedbackError && feedbackData) {
+        const insights = feedbackData.map(item => {
+          let icon = CheckCircle;
+          let color = "text-green-500";
+          let bg = "bg-green-500/10";
+          
+          if (item.type === "warning") {
+            icon = AlertTriangle;
+            color = "text-yellow-500";
+            bg = "bg-yellow-500/10";
+          } else if (item.type === "improvement") {
+            icon = Clock;
+            color = "text-blue-400";
+            bg = "bg-blue-500/10";
+          }
+          
+          return {
+            icon,
+            color,
+            bg,
+            text: item.feedback
+          };
+        });
+        
+        setQuickInsights(insights);
+      }
+      
+      // Set analysis complete
+      setAnalysisComplete(true);
+      setLoading(false);
+      
+    } catch (error) {
+      console.error("Error loading resume data:", error);
+      setLoading(false);
+    }
   };
 
-  const quickInsights = [
+  // If no insights defined yet, use default ones
+  const defaultInsights = [
     {
       icon: AlertTriangle,
       color: "text-yellow-500",
@@ -62,6 +138,9 @@ export default function Dashboard() {
       text: "Consider shortening your resume to fit on a single page for better readability."
     }
   ];
+
+  // Use quick insights if available, otherwise use defaults
+  const displayInsights = quickInsights.length > 0 ? quickInsights : defaultInsights;
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -92,12 +171,15 @@ export default function Dashboard() {
                   transition={{ duration: 0.4 }}
                 >
                   <h2 className="text-xl font-semibold mb-4">Your Resume</h2>
-                  <ResumePreview />
+                  <ResumePreview 
+                    filename={resume?.filename || "my_resume.pdf"}
+                    uploadDate={resume ? new Date(resume.upload_date).toLocaleDateString() : "Today"}
+                  />
                   
                   <div className="mt-6">
                     <h3 className="text-lg font-medium mb-3">Quick Analysis</h3>
                     <div className="space-y-3">
-                      {quickInsights.map((insight, index) => (
+                      {displayInsights.map((insight, index) => (
                         <motion.div
                           key={index}
                           initial={{ opacity: 0, y: 10 }}

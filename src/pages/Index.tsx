@@ -1,24 +1,120 @@
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
-import { ArrowRight, CheckCircle, UserCheck, LineChart, FileText } from "lucide-react";
+import { ArrowRight, CheckCircle, UserCheck, LineChart, FileText, Database } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useToast } from "@/components/ui/use-toast";
 import Navbar from "@/components/Navbar";
 import ResumeUploader from "@/components/ResumeUploader";
+import { supabase } from "@/integrations/supabase/client";
 
 export default function Index() {
   const [isUploading, setIsUploading] = useState(false);
+  const [isCollectingInsights, setIsCollectingInsights] = useState(false);
   const navigate = useNavigate();
+  const { toast } = useToast();
 
-  const handleUploadComplete = (file: File) => {
-    // In a real app, you would process the file here
-    console.log("File uploaded:", file.name);
+  useEffect(() => {
+    // Check if we have insights in the database
+    checkInsightsCount();
+  }, []);
+
+  const checkInsightsCount = async () => {
+    try {
+      const { count, error } = await supabase
+        .from('reddit_insights')
+        .select('*', { count: 'exact', head: true });
+      
+      if (error) {
+        console.error("Error checking insights count:", error);
+        return;
+      }
+      
+      console.log(`Found ${count} insights in the database`);
+      
+      // If we have no insights, trigger the collection process
+      if (count === 0) {
+        setIsCollectingInsights(true);
+        await collectRedditInsights();
+        setIsCollectingInsights(false);
+      }
+    } catch (error) {
+      console.error("Error in insights check:", error);
+    }
+  };
+
+  const collectRedditInsights = async () => {
+    const subreddits = [
+      'resumes', 'Resume', 'careeradvice', 'jobs', 'askHR',
+      'internships', 'ITCareerQuestions', 'EngineeringResumes',
+      'Accounting', 'marketing', 'finance'
+    ];
     
-    // Navigate to dashboard after a short delay
-    setTimeout(() => {
+    toast({
+      title: "Collecting insights",
+      description: "Gathering resume advice from Reddit communities...",
+    });
+
+    try {
+      // For each subreddit, call the edge function to collect insights
+      for (const subreddit of subreddits) {
+        console.log(`Collecting insights from r/${subreddit}...`);
+        
+        const { data, error } = await supabase.functions.invoke('reddit-scraper', {
+          body: { subreddit }
+        });
+        
+        if (error) {
+          console.error(`Error collecting insights from r/${subreddit}:`, error);
+        } else {
+          console.log(`Collected ${data.count} insights from r/${subreddit}`);
+        }
+      }
+      
+      toast({
+        title: "Insights collection complete",
+        description: "Resume insights have been gathered from Reddit communities.",
+      });
+    } catch (error) {
+      console.error("Error collecting insights:", error);
+      toast({
+        title: "Error collecting insights",
+        description: "There was a problem gathering insights from Reddit.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleUploadComplete = async (file: File, resumeId: string) => {
+    console.log("Resume uploaded:", file.name, "ID:", resumeId);
+    
+    try {
+      // Trigger resume analysis
+      const { data, error } = await supabase.functions.invoke('analyze-resume', {
+        body: { 
+          resumeId,
+          resumeText: "This is a placeholder for the actual resume text that would be extracted."
+        }
+      });
+      
+      if (error) {
+        console.error("Error analyzing resume:", error);
+        toast({
+          title: "Analysis failed",
+          description: "We couldn't analyze your resume. Please try again.",
+          variant: "destructive",
+        });
+        return;
+      }
+      
+      console.log("Analysis complete:", data);
+      
+      // Navigate to dashboard to see results
       navigate("/dashboard");
-    }, 1000);
+    } catch (error) {
+      console.error("Error in resume analysis:", error);
+    }
   };
 
   const features = [
@@ -87,6 +183,18 @@ export default function Index() {
                 Get Started
                 <ArrowRight className="ml-2 h-5 w-5" />
               </Button>
+              
+              {isCollectingInsights && (
+                <Button
+                  size="lg"
+                  variant="outline"
+                  className="ml-4"
+                  disabled
+                >
+                  <Database className="mr-2 h-4 w-4 animate-pulse" />
+                  Collecting Reddit Insights...
+                </Button>
+              )}
             </motion.div>
           </motion.div>
           

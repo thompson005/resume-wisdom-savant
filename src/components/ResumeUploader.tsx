@@ -1,20 +1,24 @@
 
 import { useState, useRef } from "react";
 import { motion } from "framer-motion";
-import { Upload, File, X, Check, ArrowRight } from "lucide-react";
+import { Upload, File, X, Check, ArrowRight, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
+import { supabase } from "@/integrations/supabase/client";
+import { useNavigate } from "react-router-dom";
 
 type ResumeUploaderProps = {
-  onUploadComplete: (file: File) => void;
+  onUploadComplete: (file: File, resumeId: string) => void;
 };
 
 export default function ResumeUploader({ onUploadComplete }: ResumeUploaderProps) {
   const [dragActive, setDragActive] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [extractingText, setExtractingText] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
+  const navigate = useNavigate();
 
   const handleDrag = (e: React.DragEvent) => {
     e.preventDefault();
@@ -77,23 +81,128 @@ export default function ResumeUploader({ onUploadComplete }: ResumeUploaderProps
     }
   };
 
+  const extractTextFromFile = async (file: File): Promise<string> => {
+    setExtractingText(true);
+    
+    // For this demo, we'll simulate text extraction
+    // In a real app, you would use a library like pdf.js or docx.js
+    // or call an API to extract text from the resume
+    
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        // Simple mock text extraction for demo purposes
+        const mockResumeText = `
+John Doe
+Software Engineer
+john.doe@email.com | (123) 456-7890 | linkedin.com/in/johndoe
+
+SUMMARY
+Results-driven Software Engineer with 5 years of experience in full-stack development, specializing in React, Node.js, and cloud technologies. Proven track record of delivering scalable, high-performance applications and leading development teams.
+
+SKILLS
+Programming: JavaScript, TypeScript, Python, Java
+Frontend: React, Redux, HTML5, CSS3, Tailwind CSS
+Backend: Node.js, Express, GraphQL, REST APIs
+Databases: MongoDB, PostgreSQL, MySQL
+DevOps: AWS, Docker, Kubernetes, CI/CD
+Tools: Git, GitHub, JIRA, Figma
+
+WORK EXPERIENCE
+Senior Software Engineer | Tech Solutions Inc.
+January 2021 - Present
+- Architected and developed a customer portal that increased user engagement by 35%
+- Led a team of 5 engineers in rebuilding the company's flagship product
+- Implemented CI/CD pipelines that reduced deployment time by 70%
+- Optimized database queries resulting in 50% reduction in API response times
+
+Software Engineer | Digital Innovations LLC
+June 2018 - December 2020
+- Developed frontend components using React and TypeScript
+- Created RESTful APIs using Node.js and Express
+- Collaborated with UX designers to implement responsive designs
+- Participated in Agile development processes and sprint planning
+
+EDUCATION
+Bachelor of Science in Computer Science
+University of Technology | 2014 - 2018
+- GPA: 3.8/4.0
+- Dean's List: 2015-2018
+- Senior Project: Developed a machine learning algorithm for text classification
+
+PROJECTS
+E-commerce Platform (2022)
+- Built a full-stack e-commerce application using MERN stack
+- Implemented payment processing using Stripe API
+- Deployed on AWS using Docker containers
+
+Weather Prediction App (2021)
+- Created a weather forecasting application using React and weather APIs
+- Implemented geolocation features and interactive maps
+- Achieved 10,000+ downloads on Google Play Store
+
+CERTIFICATIONS
+- AWS Certified Solutions Architect (2023)
+- MongoDB Certified Developer (2022)
+- Google Cloud Professional Developer (2021)
+        `;
+        
+        setExtractingText(false);
+        resolve(mockResumeText);
+      }, 1500);
+    });
+  };
+
   const handleUpload = async () => {
     if (!file) return;
     
-    setUploading(true);
-    
-    // Simulate upload delay
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    
-    // In a real app, you would upload the file to your server here
-    
-    toast({
-      title: "Resume uploaded successfully",
-      description: "We're analyzing your resume now.",
-    });
-    
-    onUploadComplete(file);
-    setUploading(false);
+    try {
+      setUploading(true);
+      
+      // Step 1: Extract text from resume
+      const resumeText = await extractTextFromFile(file);
+      
+      // Step 2: Upload to Supabase
+      const session = await supabase.auth.getSession();
+      const userId = session.data.session?.user.id;
+      
+      // For anonymous users, we'll still allow uploads but won't associate with a user
+      const { data, error } = await supabase
+        .from('user_resumes')
+        .insert({
+          user_id: userId || null,
+          filename: file.name,
+          content: resumeText
+        })
+        .select()
+        .single();
+      
+      if (error) {
+        throw new Error(error.message);
+      }
+      
+      // Step 3: Start analysis
+      toast({
+        title: "Resume uploaded successfully",
+        description: "We're analyzing your resume now.",
+      });
+      
+      onUploadComplete(file, data.id);
+      
+      // Navigate to dashboard after a short delay
+      setTimeout(() => {
+        navigate("/dashboard");
+      }, 1000);
+      
+    } catch (error) {
+      console.error("Error processing resume:", error);
+      toast({
+        title: "Upload failed",
+        description: error.message || "Something went wrong. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setUploading(false);
+    }
   };
 
   const removeFile = () => {
@@ -153,7 +262,7 @@ export default function ResumeUploader({ onUploadComplete }: ResumeUploaderProps
                 size="sm"
                 className="flex items-center gap-1.5"
                 onClick={removeFile}
-                disabled={uploading}
+                disabled={uploading || extractingText}
               >
                 <X size={16} />
                 Remove
@@ -164,10 +273,13 @@ export default function ResumeUploader({ onUploadComplete }: ResumeUploaderProps
                 size="sm"
                 className="flex items-center gap-1.5 bg-purple-600 hover:bg-purple-700"
                 onClick={handleUpload}
-                disabled={uploading}
+                disabled={uploading || extractingText}
               >
-                {uploading ? (
-                  <>Processing</>
+                {uploading || extractingText ? (
+                  <div className="flex items-center gap-1.5">
+                    <Loader2 size={16} className="animate-spin" />
+                    {extractingText ? "Extracting Text..." : "Processing..."}
+                  </div>
                 ) : (
                   <>
                     <Check size={16} />

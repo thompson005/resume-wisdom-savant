@@ -23,6 +23,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Badge } from "@/components/ui/badge";
+import { supabase } from "@/integrations/supabase/client";
 import Navbar from "@/components/Navbar";
 import FeedbackCard, { FeedbackItem } from "@/components/FeedbackCard";
 
@@ -50,15 +51,69 @@ export default function Feedback() {
   });
   const [searchQuery, setSearchQuery] = useState("");
 
-  // Mock data loading
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setFeedbackItems(mockFeedbackItems);
-      setLoading(false);
-    }, 1500);
-    
-    return () => clearTimeout(timer);
+    fetchFeedbackData();
   }, []);
+
+  const fetchFeedbackData = async () => {
+    try {
+      setLoading(true);
+      
+      // Get the most recent resume
+      const { data: resumeData, error: resumeError } = await supabase
+        .from('user_resumes')
+        .select('*')
+        .order('upload_date', { ascending: false })
+        .limit(1)
+        .single();
+      
+      if (resumeError) {
+        console.error("Error fetching resume:", resumeError);
+        setLoading(false);
+        // If no resume, use mock data
+        setFeedbackItems(mockFeedbackItems);
+        return;
+      }
+      
+      // Get feedback for this resume
+      const { data: feedbackData, error: feedbackError } = await supabase
+        .from('resume_feedback')
+        .select('*')
+        .eq('resume_id', resumeData.id);
+      
+      if (feedbackError) {
+        console.error("Error fetching feedback:", feedbackError);
+        setLoading(false);
+        // If error, use mock data
+        setFeedbackItems(mockFeedbackItems);
+        return;
+      }
+      
+      // Transform feedback data to match FeedbackItem type
+      if (feedbackData && feedbackData.length > 0) {
+        const items: FeedbackItem[] = feedbackData.map(item => ({
+          id: item.id,
+          type: item.type as "improvement" | "strength" | "insight" | "warning" | "suggestion",
+          title: item.category,
+          description: item.feedback,
+          section: item.section,
+          source: item.source || undefined
+        }));
+        
+        setFeedbackItems(items);
+      } else {
+        // If no feedback, use mock data
+        setFeedbackItems(mockFeedbackItems);
+      }
+      
+      setLoading(false);
+    } catch (error) {
+      console.error("Error loading feedback data:", error);
+      setLoading(false);
+      // If error, use mock data
+      setFeedbackItems(mockFeedbackItems);
+    }
+  };
 
   // Filter and search logic
   const filteredFeedback = feedbackItems.filter(item => {

@@ -9,7 +9,151 @@ export type Json =
 export type Database = {
   public: {
     Tables: {
-      [_ in never]: never
+      reddit_insights: {
+        Row: {
+          category: string
+          created_at: string | null
+          id: string
+          insight: string
+          section: string
+          sentiment: string
+          source_url: string | null
+          subreddit: string
+        }
+        Insert: {
+          category: string
+          created_at?: string | null
+          id?: string
+          insight: string
+          section: string
+          sentiment: string
+          source_url?: string | null
+          subreddit: string
+        }
+        Update: {
+          category?: string
+          created_at?: string | null
+          id?: string
+          insight?: string
+          section?: string
+          sentiment?: string
+          source_url?: string | null
+          subreddit?: string
+        }
+        Relationships: []
+      }
+      resume_feedback: {
+        Row: {
+          category: string
+          created_at: string | null
+          feedback: string
+          id: string
+          resume_id: string | null
+          section: string
+          severity: string | null
+          source: string | null
+          suggestion: string | null
+          type: string
+        }
+        Insert: {
+          category: string
+          created_at?: string | null
+          feedback: string
+          id?: string
+          resume_id?: string | null
+          section: string
+          severity?: string | null
+          source?: string | null
+          suggestion?: string | null
+          type: string
+        }
+        Update: {
+          category?: string
+          created_at?: string | null
+          feedback?: string
+          id?: string
+          resume_id?: string | null
+          section?: string
+          severity?: string | null
+          source?: string | null
+          suggestion?: string | null
+          type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "resume_feedback_resume_id_fkey"
+            columns: ["resume_id"]
+            isOneToOne: false
+            referencedRelation: "user_resumes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      resume_scores: {
+        Row: {
+          ats_score: number
+          content_score: number
+          created_at: string | null
+          formatting_score: number
+          id: string
+          impact_score: number
+          overall_score: number
+          resume_id: string | null
+        }
+        Insert: {
+          ats_score: number
+          content_score: number
+          created_at?: string | null
+          formatting_score: number
+          id?: string
+          impact_score: number
+          overall_score: number
+          resume_id?: string | null
+        }
+        Update: {
+          ats_score?: number
+          content_score?: number
+          created_at?: string | null
+          formatting_score?: number
+          id?: string
+          impact_score?: number
+          overall_score?: number
+          resume_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "resume_scores_resume_id_fkey"
+            columns: ["resume_id"]
+            isOneToOne: false
+            referencedRelation: "user_resumes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      user_resumes: {
+        Row: {
+          content: string
+          filename: string
+          id: string
+          upload_date: string | null
+          user_id: string | null
+        }
+        Insert: {
+          content: string
+          filename: string
+          id?: string
+          upload_date?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          content?: string
+          filename?: string
+          id?: string
+          upload_date?: string | null
+          user_id?: string | null
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
