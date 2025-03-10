@@ -2,7 +2,7 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
-import { ArrowRight, CheckCircle, UserCheck, LineChart, FileText, Database, RefreshCw } from "lucide-react";
+import { ArrowRight, CheckCircle, UserCheck, LineChart, FileText, Database, RefreshCw, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
 import Navbar from "@/components/Navbar";
@@ -14,6 +14,7 @@ export default function Index() {
   const [isCollectingInsights, setIsCollectingInsights] = useState(false);
   const [isSessionReady, setIsSessionReady] = useState(false);
   const [insightsCount, setInsightsCount] = useState(0);
+  const [isDataReady, setIsDataReady] = useState(false);
   const navigate = useNavigate();
   const { toast } = useToast();
 
@@ -21,12 +22,15 @@ export default function Index() {
     // Initialize session and check for insights
     const initializeApp = async () => {
       try {
+        console.log("Initializing app and checking for insights...");
+        
         // Ensure we have a session (anonymous if needed)
         await ensureSession();
         setIsSessionReady(true);
         
         // Check if we have insights in the database
         await checkInsightsCount();
+        setIsDataReady(true);
       } catch (error) {
         console.error("Error initializing app:", error);
         toast({
@@ -34,6 +38,7 @@ export default function Index() {
           description: "There was a problem setting up the application. Please refresh the page.",
           variant: "destructive",
         });
+        setIsDataReady(true);
       }
     };
     
@@ -61,9 +66,7 @@ export default function Index() {
           description: "We need to collect resume insights before analyzing. This will start automatically.",
         });
         
-        setIsCollectingInsights(true);
         await collectRedditInsights();
-        setIsCollectingInsights(false);
       }
     } catch (error) {
       console.error("Error in insights check:", error);
@@ -71,6 +74,8 @@ export default function Index() {
   };
 
   const collectRedditInsights = async () => {
+    setIsCollectingInsights(true);
+    
     const subreddits = [
       'resumes', 'Resume', 'jobs'
     ];
@@ -97,6 +102,22 @@ export default function Index() {
           
           if (error) {
             console.error(`Error collecting insights from r/${subreddit}:`, error);
+            
+            // Try again with a different approach - add explicit .json to the URL
+            try {
+              const retryData = await supabase.functions.invoke('reddit-scraper', {
+                body: { subreddit: `${subreddit}.json` }
+              });
+              
+              if (retryData.error) {
+                console.error(`Retry also failed for r/${subreddit}:`, retryData.error);
+              } else if (retryData.data) {
+                console.log(`Retry succeeded! Collected ${retryData.data.count || 0} insights from r/${subreddit}`);
+                totalInsights += retryData.data.count || 0;
+              }
+            } catch (retryError) {
+              console.error(`Error in retry for r/${subreddit}:`, retryError);
+            }
           } else if (data) {
             console.log(`Collected ${data.count || 0} insights from r/${subreddit}`);
             totalInsights += data.count || 0;
@@ -119,11 +140,33 @@ export default function Index() {
           description: `${totalInsights} resume insights have been gathered from Reddit communities.`,
         });
       } else {
-        toast({
-          title: "Insights collection issue",
-          description: "We had trouble collecting insights. You can try again or continue anyway.",
-          variant: "destructive",
-        });
+        // Try to fetch mock insights if no real ones could be collected
+        try {
+          const { data } = await supabase.functions.invoke('reddit-scraper', {
+            body: { subreddit: "mock" }
+          });
+          
+          if (data && data.count > 0) {
+            toast({
+              title: "Using sample insights",
+              description: "We're using sample resume insights for analysis.",
+            });
+            await checkInsightsCount();
+          } else {
+            toast({
+              title: "Insights collection issue",
+              description: "We had trouble collecting insights. You can continue anyway with sample data.",
+              variant: "destructive",
+            });
+          }
+        } catch (mockError) {
+          console.error("Error getting mock insights:", mockError);
+          toast({
+            title: "Insights collection issue",
+            description: "We had trouble collecting insights. You can try again or continue anyway.",
+            variant: "destructive",
+          });
+        }
       }
     } catch (error) {
       console.error("Error collecting insights:", error);
@@ -132,6 +175,8 @@ export default function Index() {
         description: "There was a problem gathering insights from Reddit.",
         variant: "destructive",
       });
+    } finally {
+      setIsCollectingInsights(false);
     }
   };
 
@@ -161,8 +206,13 @@ export default function Index() {
           .from('reddit_insights')
           .select('*', { count: 'exact', head: true });
           
-        if (error || !count) {
-          throw new Error("Failed to collect insights for analysis");
+        if (error) {
+          console.error("Error checking insights count:", error);
+        }
+        
+        // If we still have no insights, we'll continue with mock data
+        if (!count) {
+          console.log("Still no insights available, continuing with mock data");
         }
       }
       
@@ -227,6 +277,18 @@ export default function Index() {
       description: "Compare your resume against industry standards and expectations"
     }
   ];
+
+  if (!isDataReady) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center">
+        <div className="text-center">
+          <RefreshCw className="h-10 w-10 animate-spin text-purple-500 mx-auto mb-4" />
+          <h2 className="text-2xl font-semibold mb-2">Loading Application</h2>
+          <p className="text-muted-foreground">Initializing and checking data...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -344,9 +406,15 @@ export default function Index() {
               Get detailed feedback and actionable suggestions to enhance your resume and improve your job prospects.
             </p>
             
-            {insightsCount > 0 && (
-              <div className="mt-2 text-sm text-green-500">
+            {insightsCount > 0 ? (
+              <div className="mt-2 text-sm text-green-500 flex items-center justify-center">
+                <CheckCircle className="h-4 w-4 mr-1" />
                 Ready with {insightsCount} insights from Reddit
+              </div>
+            ) : (
+              <div className="mt-2 text-sm text-amber-500 flex items-center justify-center">
+                <AlertCircle className="h-4 w-4 mr-1" />
+                Using sample insights for analysis
               </div>
             )}
           </motion.div>

@@ -1,4 +1,3 @@
-
 import { useState, useRef, useEffect } from "react";
 import { motion } from "framer-motion";
 import { Upload, File, X, Check, ArrowRight, Loader2 } from "lucide-react";
@@ -193,7 +192,7 @@ CERTIFICATIONS
       // Step 2: Ensure we have a session
       const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
       if (sessionError) {
-        // Fixed error handling - don't try to construct the error
+        // Correct error handling - directly throw the error object
         throw sessionError;
       }
 
