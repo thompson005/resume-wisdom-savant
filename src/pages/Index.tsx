@@ -7,17 +7,36 @@ import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
 import Navbar from "@/components/Navbar";
 import ResumeUploader from "@/components/ResumeUploader";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase, ensureSession } from "@/integrations/supabase/client";
 
 export default function Index() {
   const [isUploading, setIsUploading] = useState(false);
   const [isCollectingInsights, setIsCollectingInsights] = useState(false);
+  const [isSessionReady, setIsSessionReady] = useState(false);
   const navigate = useNavigate();
   const { toast } = useToast();
 
   useEffect(() => {
-    // Check if we have insights in the database
-    checkInsightsCount();
+    // Initialize session and check for insights
+    const initializeApp = async () => {
+      try {
+        // Ensure we have a session (anonymous if needed)
+        await ensureSession();
+        setIsSessionReady(true);
+        
+        // Check if we have insights in the database
+        await checkInsightsCount();
+      } catch (error) {
+        console.error("Error initializing app:", error);
+        toast({
+          title: "Initialization error",
+          description: "There was a problem setting up the application. Please refresh the page.",
+          variant: "destructive",
+        });
+      }
+    };
+    
+    initializeApp();
   }, []);
 
   const checkInsightsCount = async () => {
@@ -67,8 +86,8 @@ export default function Index() {
         
         if (error) {
           console.error(`Error collecting insights from r/${subreddit}:`, error);
-        } else {
-          console.log(`Collected ${data.count} insights from r/${subreddit}`);
+        } else if (data) {
+          console.log(`Collected ${data.count || 0} insights from r/${subreddit}`);
         }
       }
       

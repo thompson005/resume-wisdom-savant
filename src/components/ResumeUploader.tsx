@@ -1,10 +1,10 @@
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { motion } from "framer-motion";
 import { Upload, File, X, Check, ArrowRight, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase, ensureSession } from "@/integrations/supabase/client";
 import { useNavigate } from "react-router-dom";
 
 type ResumeUploaderProps = {
@@ -16,9 +16,29 @@ export default function ResumeUploader({ onUploadComplete }: ResumeUploaderProps
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [extractingText, setExtractingText] = useState(false);
+  const [sessionReady, setSessionReady] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
   const navigate = useNavigate();
+
+  // Ensure we have a session (anonymous if needed)
+  useEffect(() => {
+    const initSession = async () => {
+      try {
+        await ensureSession();
+        setSessionReady(true);
+      } catch (error) {
+        console.error("Error initializing session:", error);
+        toast({
+          title: "Authentication error",
+          description: "Failed to initialize session. Please try again.",
+          variant: "destructive",
+        });
+      }
+    };
+
+    initSession();
+  }, [toast]);
 
   const handleDrag = (e: React.DragEvent) => {
     e.preventDefault();
@@ -153,7 +173,7 @@ CERTIFICATIONS
   };
 
   const handleUpload = async () => {
-    if (!file) return;
+    if (!file || !sessionReady) return;
     
     try {
       setUploading(true);
@@ -161,15 +181,20 @@ CERTIFICATIONS
       // Step 1: Extract text from resume
       const resumeText = await extractTextFromFile(file);
       
-      // Step 2: Upload to Supabase
-      const session = await supabase.auth.getSession();
-      const userId = session.data.session?.user.id;
+      // Step 2: Ensure we have a session
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError) throw new sessionError;
+
+      // Check if we have a session, if not create an anonymous one
+      if (!sessionData.session) {
+        await ensureSession();
+      }
       
-      // For anonymous users, we'll still allow uploads but won't associate with a user
+      // Step 3: Upload to Supabase
       const { data, error } = await supabase
         .from('user_resumes')
         .insert({
-          user_id: userId || null,
+          user_id: sessionData.session?.user.id,
           filename: file.name,
           content: resumeText
         })
@@ -177,27 +202,30 @@ CERTIFICATIONS
         .single();
       
       if (error) {
+        console.error("Supabase insert error:", error);
         throw new Error(error.message);
       }
       
-      // Step 3: Start analysis
+      // Step 4: Start analysis
       toast({
         title: "Resume uploaded successfully",
         description: "We're analyzing your resume now.",
       });
       
-      onUploadComplete(file, data.id);
+      if (data) {
+        onUploadComplete(file, data.id);
       
-      // Navigate to dashboard after a short delay
-      setTimeout(() => {
-        navigate("/dashboard");
-      }, 1000);
+        // Navigate to dashboard after a short delay
+        setTimeout(() => {
+          navigate("/dashboard");
+        }, 1000);
+      }
       
     } catch (error) {
       console.error("Error processing resume:", error);
       toast({
         title: "Upload failed",
-        description: error.message || "Something went wrong. Please try again.",
+        description: "Something went wrong. Please try again.",
         variant: "destructive",
       });
     } finally {
@@ -273,7 +301,7 @@ CERTIFICATIONS
                 size="sm"
                 className="flex items-center gap-1.5 bg-purple-600 hover:bg-purple-700"
                 onClick={handleUpload}
-                disabled={uploading || extractingText}
+                disabled={uploading || extractingText || !sessionReady}
               >
                 {uploading || extractingText ? (
                   <div className="flex items-center gap-1.5">

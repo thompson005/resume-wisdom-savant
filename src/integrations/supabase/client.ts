@@ -9,4 +9,24 @@ const SUPABASE_PUBLISHABLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiO
 // Import the supabase client like this:
 // import { supabase } from "@/integrations/supabase/client";
 
-export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+export const supabase = createClient<Database>(
+  SUPABASE_URL, 
+  SUPABASE_PUBLISHABLE_KEY,
+  {
+    auth: {
+      autoRefreshToken: true,
+      persistSession: true,
+    }
+  }
+);
+
+// Create an anonymous session if none exists
+export const ensureSession = async () => {
+  const { data } = await supabase.auth.getSession();
+  
+  if (!data.session) {
+    // Create an anonymous session
+    await supabase.auth.signInAnonymously();
+    console.log("Created anonymous session");
+  }
+};
