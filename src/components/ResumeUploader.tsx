@@ -8,10 +8,11 @@ import { supabase, ensureSession } from "@/integrations/supabase/client";
 import { useNavigate } from "react-router-dom";
 
 type ResumeUploaderProps = {
-  onUploadComplete: (file: File, resumeId: string) => void;
+  onUploadComplete: (file: File, resumeId: string, resumeText: string) => void;
+  isLoading?: boolean;
 };
 
-export default function ResumeUploader({ onUploadComplete }: ResumeUploaderProps) {
+export default function ResumeUploader({ onUploadComplete, isLoading = false }: ResumeUploaderProps) {
   const [dragActive, setDragActive] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -52,13 +53,13 @@ export default function ResumeUploader({ onUploadComplete }: ResumeUploaderProps
   };
 
   const validateFile = (file: File): boolean => {
-    const validTypes = ["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"];
+    const validTypes = ["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "text/plain"];
     const maxSize = 10 * 1024 * 1024; // 10MB
     
     if (!validTypes.includes(file.type)) {
       toast({
         title: "Invalid file type",
-        description: "Please upload a PDF or DOCX file.",
+        description: "Please upload a PDF, DOCX, or TXT file.",
         variant: "destructive",
       });
       return false;
@@ -104,14 +105,20 @@ export default function ResumeUploader({ onUploadComplete }: ResumeUploaderProps
   const extractTextFromFile = async (file: File): Promise<string> => {
     setExtractingText(true);
     
-    // For this demo, we'll simulate text extraction
-    // In a real app, you would use a library like pdf.js or docx.js
-    // or call an API to extract text from the resume
-    
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        // Simple mock text extraction for demo purposes
-        const mockResumeText = `
+    try {
+      // For text files, just read the content directly
+      if (file.type === "text/plain") {
+        const text = await file.text();
+        return text;
+      }
+      
+      // For PDF and DOCX, we'll simulate text extraction for the demo
+      // In a real app, you would use a library or API for this
+      
+      return new Promise((resolve) => {
+        setTimeout(() => {
+          // Simple mock text extraction for demo purposes
+          const mockResumeText = `
 John Doe
 Software Engineer
 john.doe@email.com | (123) 456-7890 | linkedin.com/in/johndoe
@@ -164,12 +171,14 @@ CERTIFICATIONS
 - AWS Certified Solutions Architect (2023)
 - MongoDB Certified Developer (2022)
 - Google Cloud Professional Developer (2021)
-        `;
-        
-        setExtractingText(false);
-        resolve(mockResumeText);
-      }, 1500);
-    });
+          `;
+          
+          resolve(mockResumeText);
+        }, 1500);
+      });
+    } finally {
+      setExtractingText(false);
+    }
   };
 
   const handleUpload = async () => {
@@ -191,13 +200,16 @@ CERTIFICATIONS
       // Check if we have a session, if not create an anonymous one
       if (!sessionData.session) {
         await ensureSession();
+        const { data: newSession } = await supabase.auth.getSession();
+        if (!newSession.session) {
+          throw new Error("Failed to create session");
+        }
       }
       
-      // Step 3: Upload to Supabase
+      // Step 3: Upload to Supabase - Create an RLS policy that allows anonymous users to insert
       const { data, error } = await supabase
         .from('user_resumes')
         .insert({
-          user_id: sessionData.session?.user.id,
           filename: file.name,
           content: resumeText
         })
@@ -216,12 +228,7 @@ CERTIFICATIONS
       });
       
       if (data) {
-        onUploadComplete(file, data.id);
-      
-        // Navigate to dashboard after a short delay
-        setTimeout(() => {
-          navigate("/dashboard");
-        }, 1000);
+        onUploadComplete(file, data.id, resumeText);
       }
       
     } catch (error) {
@@ -248,6 +255,8 @@ CERTIFICATIONS
     
     if (file.type === "application/pdf") {
       return <File className="h-12 w-12 text-red-400" />;
+    } else if (file.type === "text/plain") {
+      return <File className="h-12 w-12 text-green-400" />;
     } else {
       return <File className="h-12 w-12 text-blue-400" />;
     }
@@ -267,9 +276,10 @@ CERTIFICATIONS
         <input
           ref={inputRef}
           type="file"
-          accept=".pdf,.docx"
+          accept=".pdf,.docx,.txt"
           className="hidden"
           onChange={handleChange}
+          disabled={uploading || isLoading || extractingText}
         />
 
         {file ? (
@@ -293,7 +303,7 @@ CERTIFICATIONS
                 size="sm"
                 className="flex items-center gap-1.5"
                 onClick={removeFile}
-                disabled={uploading || extractingText}
+                disabled={uploading || isLoading || extractingText}
               >
                 <X size={16} />
                 Remove
@@ -304,12 +314,12 @@ CERTIFICATIONS
                 size="sm"
                 className="flex items-center gap-1.5 bg-purple-600 hover:bg-purple-700"
                 onClick={handleUpload}
-                disabled={uploading || extractingText || !sessionReady}
+                disabled={uploading || isLoading || extractingText || !sessionReady}
               >
-                {uploading || extractingText ? (
+                {uploading || isLoading || extractingText ? (
                   <div className="flex items-center gap-1.5">
                     <Loader2 size={16} className="animate-spin" />
-                    {extractingText ? "Extracting Text..." : "Processing..."}
+                    {extractingText ? "Extracting Text..." : isLoading ? "Analyzing..." : "Uploading..."}
                   </div>
                 ) : (
                   <>
@@ -323,7 +333,7 @@ CERTIFICATIONS
         ) : (
           <div 
             className="flex flex-col items-center justify-center cursor-pointer"
-            onClick={() => inputRef.current?.click()}
+            onClick={() => !uploading && !isLoading && !extractingText && inputRef.current?.click()}
           >
             <motion.div
               animate={{ y: [0, -10, 0] }}
@@ -337,7 +347,7 @@ CERTIFICATIONS
               Upload your resume
             </h3>
             <p className="mb-4 text-sm text-center text-muted-foreground max-w-xs">
-              Drag and drop your PDF or DOCX file here, or click to browse files
+              Drag and drop your PDF, DOCX, or TXT file here, or click to browse files
             </p>
             
             <Button
@@ -346,6 +356,7 @@ CERTIFICATIONS
               size="sm"
               className="border-purple-700/30 text-purple-400 hover:bg-purple-700/10"
               onClick={() => inputRef.current?.click()}
+              disabled={uploading || isLoading || extractingText}
             >
               <Upload size={16} className="mr-2" />
               Select Resume
@@ -357,7 +368,7 @@ CERTIFICATIONS
       {/* File requirements */}
       <div className="mt-3 flex justify-center">
         <p className="text-xs text-muted-foreground">
-          Accepted formats: PDF, DOCX (up to 10MB)
+          Accepted formats: PDF, DOCX, TXT (up to 10MB)
         </p>
       </div>
     </div>

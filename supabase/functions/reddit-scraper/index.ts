@@ -16,6 +16,7 @@ serve(async (req) => {
   const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
   const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
   const groqApiKey = Deno.env.get('GROQ_API_KEY') ?? '';
+  const perplexityApiKey = Deno.env.get('PERPLEXITY_API_KEY') ?? '';
   
   const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
@@ -31,46 +32,126 @@ serve(async (req) => {
 
     console.log(`Scraping insights from r/${subreddit}`);
 
-    // Use Groq API to analyze Reddit content
-    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${groqApiKey}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        model: "llama3-8b-8192",
-        messages: [
-          {
-            role: "system",
-            content: "You are an expert in analyzing resume advice from Reddit. Extract key insights, categorize them, and determine sentiment."
-          },
-          {
-            role: "user",
-            content: `Extract 10 key resume insights from r/${subreddit}. For each insight, provide: 
-            1. The insight itself (actionable advice)
-            2. Which resume section it applies to (e.g., Summary, Work Experience, Education, Skills, Format, General)
-            3. Category (e.g., ATS Optimization, Content Quality, Formatting, Impact Statements)
-            4. Sentiment (positive, negative, neutral)
-            Format your response as valid JSON with an array of objects.`
-          }
-        ],
-        temperature: 0.7,
-        max_tokens: 2048
-      })
-    });
+    // Fetch actual data from Reddit's JSON API
+    const redditResponse = await fetch(`https://www.reddit.com/r/${subreddit}.json`);
+    
+    if (!redditResponse.ok) {
+      throw new Error(`Reddit API error: ${redditResponse.status}`);
+    }
+    
+    const redditData = await redditResponse.json();
+    
+    // Extract posts content for analysis
+    const posts = redditData.data.children
+      .filter(child => child.data && child.data.selftext)
+      .map(child => ({
+        title: child.data.title,
+        content: child.data.selftext,
+        url: `https://reddit.com${child.data.permalink}`
+      }))
+      .slice(0, 5); // Limit to 5 posts to avoid overloading the AI
 
-    if (!response.ok) {
-      const errorData = await response.text();
-      console.error("Groq API error:", errorData);
-      throw new Error(`Groq API error: ${response.status}`);
+    if (posts.length === 0) {
+      console.log(`No valid posts found in r/${subreddit}`);
+      return new Response(
+        JSON.stringify({ success: false, message: "No valid posts found" }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
 
-    const data = await response.json();
-    const insights = JSON.parse(data.choices[0].message.content);
+    // Compile post content for analysis
+    const postsContent = posts
+      .map(post => `Title: ${post.title}\nContent: ${post.content.substring(0, 1000)}...\nURL: ${post.url}`)
+      .join('\n\n---------\n\n');
+
+    // Use Perplexity API instead of Groq (preferred) or fallback to Groq if Perplexity key not available
+    let aiResponse;
+    let insights;
+    
+    if (perplexityApiKey) {
+      console.log("Using Perplexity API for analysis");
+      aiResponse = await fetch("https://api.perplexity.ai/chat/completions", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${perplexityApiKey}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          model: "llama-3.1-sonar-small-128k-online",
+          messages: [
+            {
+              role: "system",
+              content: "You are an expert in analyzing resume advice from Reddit. Extract key insights, categorize them, and determine sentiment."
+            },
+            {
+              role: "user",
+              content: `I've collected the following resume discussions from r/${subreddit}:\n\n${postsContent}\n\nExtract 10 key resume insights from this content. For each insight, provide: 
+              1. The insight itself (actionable advice)
+              2. Which resume section it applies to (e.g., Summary, Work Experience, Education, Skills, Format, General)
+              3. Category (e.g., ATS Optimization, Content Quality, Formatting, Impact Statements)
+              4. Sentiment (positive, negative, neutral)
+              Format your response as valid JSON with an array of objects.`
+            }
+          ],
+          temperature: 0.7,
+          max_tokens: 2048
+        })
+      });
+
+      if (!aiResponse.ok) {
+        throw new Error(`Perplexity API error: ${aiResponse.status}`);
+      }
+
+      const data = await aiResponse.json();
+      insights = JSON.parse(data.choices[0].message.content);
+      
+    } else if (groqApiKey) {
+      console.log("Using Groq API for analysis");
+      aiResponse = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${groqApiKey}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          model: "llama3-8b-8192",
+          messages: [
+            {
+              role: "system",
+              content: "You are an expert in analyzing resume advice from Reddit. Extract key insights, categorize them, and determine sentiment."
+            },
+            {
+              role: "user",
+              content: `I've collected the following resume discussions from r/${subreddit}:\n\n${postsContent}\n\nExtract 10 key resume insights from this content. For each insight, provide: 
+              1. The insight itself (actionable advice)
+              2. Which resume section it applies to (e.g., Summary, Work Experience, Education, Skills, Format, General)
+              3. Category (e.g., ATS Optimization, Content Quality, Formatting, Impact Statements)
+              4. Sentiment (positive, negative, neutral)
+              Format your response as valid JSON with an array of objects.`
+            }
+          ],
+          temperature: 0.7,
+          max_tokens: 2048
+        })
+      });
+
+      if (!aiResponse.ok) {
+        const errorData = await aiResponse.text();
+        console.error("Groq API error:", errorData);
+        throw new Error(`Groq API error: ${aiResponse.status}`);
+      }
+
+      const data = await aiResponse.json();
+      insights = JSON.parse(data.choices[0].message.content);
+      
+    } else {
+      throw new Error("No AI API key available (Perplexity or Groq)");
+    }
     
     // Store insights in the database
     for (const insight of insights) {
+      const sourceUrl = posts.length > 0 ? posts[0].url : `https://reddit.com/r/${subreddit}`;
+      
       const { data: insertData, error } = await supabase
         .from('reddit_insights')
         .insert({
@@ -79,7 +160,7 @@ serve(async (req) => {
           section: insight.section,
           category: insight.category,
           sentiment: insight.sentiment,
-          source_url: `https://reddit.com/r/${subreddit}`
+          source_url: sourceUrl
         });
         
       if (error) {
@@ -88,7 +169,12 @@ serve(async (req) => {
     }
 
     return new Response(
-      JSON.stringify({ success: true, count: insights.length }),
+      JSON.stringify({ 
+        success: true, 
+        count: insights.length, 
+        posts_analyzed: posts.length,
+        insights: insights // Include insights in the response for debugging
+      }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (error) {

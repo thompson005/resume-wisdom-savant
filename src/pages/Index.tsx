@@ -2,7 +2,7 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
-import { ArrowRight, CheckCircle, UserCheck, LineChart, FileText, Database } from "lucide-react";
+import { ArrowRight, CheckCircle, UserCheck, LineChart, FileText, Database, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
 import Navbar from "@/components/Navbar";
@@ -13,6 +13,7 @@ export default function Index() {
   const [isUploading, setIsUploading] = useState(false);
   const [isCollectingInsights, setIsCollectingInsights] = useState(false);
   const [isSessionReady, setIsSessionReady] = useState(false);
+  const [insightsCount, setInsightsCount] = useState(0);
   const navigate = useNavigate();
   const { toast } = useToast();
 
@@ -51,9 +52,15 @@ export default function Index() {
       }
       
       console.log(`Found ${count} insights in the database`);
+      setInsightsCount(count || 0);
       
       // If we have no insights, trigger the collection process
       if (count === 0) {
+        toast({
+          title: "No insights available",
+          description: "We need to collect resume insights before analyzing. This will start automatically.",
+        });
+        
         setIsCollectingInsights(true);
         await collectRedditInsights();
         setIsCollectingInsights(false);
@@ -65,9 +72,7 @@ export default function Index() {
 
   const collectRedditInsights = async () => {
     const subreddits = [
-      'resumes', 'Resume', 'careeradvice', 'jobs', 'askHR',
-      'internships', 'ITCareerQuestions', 'EngineeringResumes',
-      'Accounting', 'marketing', 'finance'
+      'resumes', 'Resume', 'jobs'
     ];
     
     toast({
@@ -76,25 +81,50 @@ export default function Index() {
     });
 
     try {
+      // First, ensure we have a session
+      await ensureSession();
+      
       // For each subreddit, call the edge function to collect insights
+      let totalInsights = 0;
+      
       for (const subreddit of subreddits) {
         console.log(`Collecting insights from r/${subreddit}...`);
         
-        const { data, error } = await supabase.functions.invoke('reddit-scraper', {
-          body: { subreddit }
-        });
-        
-        if (error) {
-          console.error(`Error collecting insights from r/${subreddit}:`, error);
-        } else if (data) {
-          console.log(`Collected ${data.count || 0} insights from r/${subreddit}`);
+        try {
+          const { data, error } = await supabase.functions.invoke('reddit-scraper', {
+            body: { subreddit }
+          });
+          
+          if (error) {
+            console.error(`Error collecting insights from r/${subreddit}:`, error);
+          } else if (data) {
+            console.log(`Collected ${data.count || 0} insights from r/${subreddit}`);
+            totalInsights += data.count || 0;
+          }
+          
+          // Add a small delay between requests to avoid rate limiting
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          
+        } catch (error) {
+          console.error(`Error with r/${subreddit}:`, error);
         }
       }
       
-      toast({
-        title: "Insights collection complete",
-        description: "Resume insights have been gathered from Reddit communities.",
-      });
+      // Update the count after collection
+      await checkInsightsCount();
+      
+      if (totalInsights > 0) {
+        toast({
+          title: "Insights collection complete",
+          description: `${totalInsights} resume insights have been gathered from Reddit communities.`,
+        });
+      } else {
+        toast({
+          title: "Insights collection issue",
+          description: "We had trouble collecting insights. You can try again or continue anyway.",
+          variant: "destructive",
+        });
+      }
     } catch (error) {
       console.error("Error collecting insights:", error);
       toast({
@@ -105,15 +135,47 @@ export default function Index() {
     }
   };
 
-  const handleUploadComplete = async (file: File, resumeId: string) => {
+  const handleRefreshInsights = async () => {
+    setIsCollectingInsights(true);
+    await collectRedditInsights();
+    setIsCollectingInsights(false);
+  };
+
+  const handleUploadComplete = async (file: File, resumeId: string, resumeText: string) => {
     console.log("Resume uploaded:", file.name, "ID:", resumeId);
     
+    setIsUploading(true);
+    
     try {
+      // Ensure we have insights before analysis
+      if (insightsCount === 0) {
+        toast({
+          title: "No insights available",
+          description: "We need to collect insights before analyzing your resume.",
+        });
+        
+        await collectRedditInsights();
+        
+        // Re-check if we have insights now
+        const { count, error } = await supabase
+          .from('reddit_insights')
+          .select('*', { count: 'exact', head: true });
+          
+        if (error || !count) {
+          throw new Error("Failed to collect insights for analysis");
+        }
+      }
+      
+      toast({
+        title: "Analyzing resume",
+        description: "We're comparing your resume against Reddit insights...",
+      });
+      
       // Trigger resume analysis
       const { data, error } = await supabase.functions.invoke('analyze-resume', {
         body: { 
           resumeId,
-          resumeText: "This is a placeholder for the actual resume text that would be extracted."
+          resumeText: resumeText
         }
       });
       
@@ -129,10 +191,22 @@ export default function Index() {
       
       console.log("Analysis complete:", data);
       
+      toast({
+        title: "Analysis complete",
+        description: "Your resume has been analyzed. View your results on the dashboard.",
+      });
+      
       // Navigate to dashboard to see results
       navigate("/dashboard");
     } catch (error) {
       console.error("Error in resume analysis:", error);
+      toast({
+        title: "Analysis error",
+        description: "There was an error analyzing your resume. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsUploading(false);
     }
   };
 
@@ -184,7 +258,7 @@ export default function Index() {
               transition={{ duration: 0.5, delay: 0.2 }}
               className="mt-6 text-lg sm:text-xl text-muted-foreground max-w-3xl mx-auto"
             >
-              Upload your resume and get personalized feedback based on thousands of Reddit 
+              Upload your resume and get personalized feedback based on Reddit 
               discussions. Improve your chances of landing interviews with actionable insights.
             </motion.p>
             
@@ -192,7 +266,7 @@ export default function Index() {
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5, delay: 0.3 }}
-              className="mt-8 sm:mt-10 flex justify-center"
+              className="mt-8 sm:mt-10 flex flex-wrap justify-center gap-4"
             >
               <Button
                 size="lg"
@@ -203,15 +277,24 @@ export default function Index() {
                 <ArrowRight className="ml-2 h-5 w-5" />
               </Button>
               
-              {isCollectingInsights && (
+              {isCollectingInsights ? (
                 <Button
                   size="lg"
                   variant="outline"
-                  className="ml-4"
                   disabled
                 >
                   <Database className="mr-2 h-4 w-4 animate-pulse" />
                   Collecting Reddit Insights...
+                </Button>
+              ) : (
+                <Button
+                  size="lg"
+                  variant="outline"
+                  onClick={handleRefreshInsights}
+                  disabled={isCollectingInsights}
+                >
+                  <RefreshCw className={`mr-2 h-4 w-4 ${isCollectingInsights ? 'animate-spin' : ''}`} />
+                  {insightsCount > 0 ? `Refresh Insights (${insightsCount})` : "Collect Insights"}
                 </Button>
               )}
             </motion.div>
@@ -260,6 +343,12 @@ export default function Index() {
             <p className="mt-3 text-muted-foreground max-w-2xl mx-auto">
               Get detailed feedback and actionable suggestions to enhance your resume and improve your job prospects.
             </p>
+            
+            {insightsCount > 0 && (
+              <div className="mt-2 text-sm text-green-500">
+                Ready with {insightsCount} insights from Reddit
+              </div>
+            )}
           </motion.div>
           
           <motion.div
@@ -268,7 +357,7 @@ export default function Index() {
             viewport={{ once: true }}
             transition={{ duration: 0.5, delay: 0.2 }}
           >
-            <ResumeUploader onUploadComplete={handleUploadComplete} />
+            <ResumeUploader onUploadComplete={handleUploadComplete} isLoading={isUploading} />
           </motion.div>
           
           <motion.div
