@@ -183,7 +183,10 @@ CERTIFICATIONS
       
       // Step 2: Ensure we have a session
       const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-      if (sessionError) throw new sessionError;
+      if (sessionError) {
+        // Fixed error handling - don't try to construct the error
+        throw sessionError;
+      }
 
       // Check if we have a session, if not create an anonymous one
       if (!sessionData.session) {
@@ -203,7 +206,7 @@ CERTIFICATIONS
       
       if (error) {
         console.error("Supabase insert error:", error);
-        throw new Error(error.message);
+        throw error;
       }
       
       // Step 4: Start analysis
